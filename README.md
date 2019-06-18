@@ -1,2 +1,2 @@
 # BluetoothTools
-Example of using dbus api for pairing devices with pin
+Example of using gdbus api for pairing devices with pin
