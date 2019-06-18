@@ -67,6 +67,141 @@ void bluez_device_appeared ( GDBusConnection * sig         ,
 }
 
 ///
+void paired_devices_list ( GDBusConnection * conn  ,
+                           GAsyncResult    * res  ,
+                           gpointer          data )
+{
+    ///
+    GVariant        * result                ;
+    GVariant        * ifaces_and_properties ;
+    const gchar     * object_path           ;
+    GVariantIter      i                     ;
+
+    ///
+    struct Args
+    {
+        GMainLoop * p1 ;
+        std::vector< std::pair< std::string, std::string > > * p2 ;
+    } ;
+    Args  * params = reinterpret_cast <Args *> ( data ) ;
+
+    ///
+    std::pair< std::string , std::string > device ;
+
+    ///
+    result = g_dbus_connection_call_finish ( conn , res , NULL ) ;
+
+    ///
+    if ( result )
+    {
+        result = g_variant_get_child_value ( result , 0 ) ;
+        g_variant_iter_init ( & i , result ) ;
+        while ( g_variant_iter_next ( & i , "{&o@a{sa{sv}}}" , &object_path , &ifaces_and_properties ) )
+        {
+            const gchar * interface_name ;
+            GVariant    * properties     ;
+            GVariantIter  ii             ;
+
+            g_variant_iter_init ( & ii , ifaces_and_properties ) ;
+            while ( g_variant_iter_next ( &ii , "{&s@a{sv}}" , &interface_name , & properties ) )
+            {
+                if( g_strstr_len ( g_ascii_strdown ( interface_name , -1 ), -1, "device" ) )
+                {
+                    const gchar  * property_name ;
+                    GVariantIter   iii           ;
+                    GVariant     * prop_val      ;
+
+                    ///
+                    std::string addr ;
+                    std::string name ;
+
+                    g_variant_iter_init ( & iii ,  properties ) ;
+                    while ( g_variant_iter_next ( & iii , "{&sv}", & property_name, & prop_val ) )
+                    {
+
+                        if ( strcmp ( property_name , "Address" ) == 0 )
+                        {
+                           addr =  g_variant_get_string ( prop_val , NULL )  ;
+                            //g_print("%s\n", g_variant_get_string(prop_val, NULL));
+                        }
+                        else if ( strcmp ( property_name , "Name" ) == 0 )
+                        {
+                           //g_print("%s\n", g_variant_get_string(prop_val, NULL));
+                           name = g_variant_get_string ( prop_val , NULL )  ;
+                        }
+                        else if ( strcmp ( property_name , "Paired" ) == 0 )
+                        {
+                            if ( g_variant_get_boolean ( prop_val ) == 1 )
+                            {
+                               device.first  = addr ;
+                               device.second = name ;
+                               (params->p2)->push_back ( device ) ;
+                            }
+                            else
+                            {
+                                g_dbus_connection_call_sync ( conn                                  ,
+                                                              "org.bluez"                           ,
+                                                              "/org/bluez/hci0"                     ,
+                                                              "org.bluez.Adapter1"                  ,
+                                                              "RemoveDevice"                        ,
+                                                              g_variant_new ( "(o)" , object_path ) ,
+                                                              NULL                                  ,
+                                                              G_DBUS_CALL_FLAGS_NONE                ,
+                                                              -1                                    ,
+                                                              NULL                                  ,
+                                                              NULL                                 );
+
+                            }
+                        }
+
+                    }//while
+
+                    g_variant_unref ( prop_val ) ;
+                }
+                g_variant_unref ( properties ) ;
+            }
+            g_variant_unref ( ifaces_and_properties ) ;
+        }
+        g_variant_unref ( result ) ;
+    }
+    g_main_loop_quit ( ( GMainLoop * ) params->p1 ) ;
+}
+
+///
+void get_paired_devices ( std::vector< std::pair< std::string, std::string > > & list )
+{
+    GDBusConnection * conn ;
+    GMainLoop       * loop ;
+
+    conn = g_bus_get_sync ( G_BUS_TYPE_SYSTEM , NULL , NULL ) ;
+    loop = g_main_loop_new ( NULL , FALSE ) ;
+
+    struct
+    {
+        GMainLoop * p1 ;
+        std::vector< std::pair< std::string, std::string > > * p2 ;
+    } callback_params ;
+
+    callback_params.p1 = loop ;
+    callback_params.p2 = & list ;
+
+    g_dbus_connection_call ( conn                                        ,
+                             "org.bluez"                                 ,
+                             "/"                                         ,
+                             "org.freedesktop.DBus.ObjectManager"        ,
+                             "GetManagedObjects"                         ,
+                             NULL                                        ,
+                             G_VARIANT_TYPE("(a{oa{sa{sv}}})")           ,
+                             G_DBUS_CALL_FLAGS_NONE                      ,
+                             -1                                          ,
+                             NULL                                        ,
+                             ( GAsyncReadyCallback ) paired_devices_list ,
+                             &callback_params                           );
+
+    g_main_loop_run ( loop ) ;
+}
+
+///
 gboolean timeout_callback ( gpointer data )
 {
     g_main_loop_quit ( ( GMainLoop * ) data );
@@ -85,6 +220,9 @@ size_t BluetoothTools::scan_devices ( std::vector< std::pair< std::string, std::
 
     loop = g_main_loop_new ( NULL , FALSE ) ;
     con  = g_bus_get_sync  ( G_BUS_TYPE_SYSTEM , NULL , NULL ) ;
+
+    ///
+    get_paired_devices ( list ) ;
 
     ///
     iface_added = g_dbus_connection_signal_subscribe ( con                                  ,
@@ -355,7 +493,7 @@ int BluetoothTools::connect_device ( std::string address )
     ///
     status = connect ( this->m_socket , ( struct sockaddr * ) & property , sizeof ( property ) ) ;
 
-    if( status != 0 )
+    if ( status != 0 )
     {
         //std::cout << "connect error" << std::endl ;
         return status ;

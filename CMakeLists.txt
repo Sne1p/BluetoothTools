@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 2.8)
 
-project(bluetooth_tools)
+project(BluetoothTools)
 include_directories(/usr/include)
 include_directories(/usr/include/dbus-1.0)
 include_directories(/usr/lib/x86_64-linux-gnu/dbus-1.0/include)
